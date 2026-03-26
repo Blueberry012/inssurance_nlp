@@ -59,7 +59,10 @@ st.dataframe(df.head(), use_container_width=True)
 # =====================================================
 # Prepare Train/Test Split
 # =====================================================
-emb = gensim_interface('model/glove-wiki-gigaword-100')
+import gensim.downloader as api
+
+api.BASE_DIR = "model"  # dossiers locaux pour cacher le téléchargement
+emb = gensim_interface('glove-wiki-gigaword-100')
 
 grouped = df.groupby('assureur')['avis_spacy'].apply(
     lambda x: " ".join(x)
