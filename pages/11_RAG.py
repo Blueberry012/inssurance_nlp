@@ -1,6 +1,5 @@
 # =====================================================
-# RAG - Streamlit (FAISS + SentenceTransformers + HuggingFace Flan-T5)
-# Corrige & Reformule correctement les reviews
+# RAG (Retrieval-Augmented Generation) - Streamlit
 # =====================================================
 
 import streamlit as st
@@ -8,7 +7,7 @@ import pandas as pd
 import numpy as np
 import faiss
 from sentence_transformers import SentenceTransformer
-from transformers import pipeline
+from openai import OpenAI
 
 # =====================================================
 # CONFIG
@@ -18,18 +17,19 @@ st.title("🤖 RAG - Review Reformulation (Deployable)")
 st.markdown("---")
 
 # =====================================================
+# OPENAI CLIENT
+# =====================================================
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+
+# =====================================================
 # LOAD DATA
 # =====================================================
 @st.cache_data
 def load_data():
     df = pd.read_excel("data/reviews_nlp.xlsx")
     df = df.dropna(subset=["avis_cor", "avis_en", "note"])
-    df["avis_cor"] = df["avis_cor"].astype(str)\
-        .str.replace(r'[\r\n]+', ' ', regex=True)\
-        .str.replace(r'\s+', ' ', regex=True).str.strip()
-    df["avis_en"] = df["avis_en"].astype(str)\
-        .str.replace(r'[\r\n]+', ' ', regex=True)\
-        .str.replace(r'\s+', ' ', regex=True).str.strip()
+    df["avis_cor"] = df["avis_cor"].astype(str).str.replace(r'[\r\n]+', ' ', regex=True).str.replace(r'\s+', ' ', regex=True).str.strip()
+    df["avis_en"] = df["avis_en"].astype(str).str.replace(r'[\r\n]+', ' ', regex=True).str.replace(r'\s+', ' ', regex=True).str.strip()
     df = df[(df["avis_cor"] != "") & (df["avis_en"] != "")]
     df["note"] = df["note"].astype(int)
     return df
@@ -39,10 +39,7 @@ all_reviews_clean = df["avis_cor"].tolist()
 all_reviews_en = df["avis_en"].tolist()
 all_notes = df["note"].tolist()
 
-review_db = [
-    {"review_en": r_en, "note": note}
-    for r_en, note in zip(all_reviews_en, all_notes)
-]
+review_db = [{"review_en": r_en, "note": note} for r_en, note in zip(all_reviews_en, all_notes)]
 
 st.header("📄 Dataset Overview")
 st.dataframe(df.head(), use_container_width=True)
@@ -52,25 +49,21 @@ st.markdown("---")
 # EMBEDDING MODEL
 # =====================================================
 @st.cache_resource
-def load_embedding_model():
+def load_model():
     return SentenceTransformer("all-MiniLM-L6-v2")
 
-model = load_embedding_model()
+model = load_model()
 
 # =====================================================
-# EMBEDDINGS + FAISS
+# FAISS INDEX
 # =====================================================
 @st.cache_data
 def get_embeddings_batched(texts, batch_size=32, max_length=200):
     embeddings = []
     for i in range(0, len(texts), batch_size):
         batch = texts[i:i+batch_size]
-        batch_clean = [
-            " ".join(str(text).split()[:max_length])
-            for text in batch if str(text).strip()
-        ]
-        if not batch_clean:
-            continue
+        batch_clean = [" ".join(str(text).split()[:max_length]) for text in batch if str(text).strip()]
+        if not batch_clean: continue
         emb = model.encode(batch_clean)
         embeddings.extend(emb)
     return np.array(embeddings, dtype=np.float32)
@@ -96,7 +89,7 @@ with st.spinner("Generating embeddings and building FAISS index..."):
 @st.cache_data
 def load_test_reviews():
     df_test = pd.read_excel("data/reviews_clean.xlsx")
-    df_test = df_test[df_test["type"] == "test"].reset_index(drop=True)
+    df_test = df_test[df_test["type"]=="test"].reset_index(drop=True)
     return df_test
 
 df_test = load_test_reviews()
@@ -111,70 +104,98 @@ def retrieve_similar_reviews(query, k=3):
     return [review_db[i] for i in indices[0] if i < len(review_db)]
 
 # =====================================================
-# TEXT GENERATOR (Flan-T5)
+# PROMPT GENERATION
 # =====================================================
-@st.cache_resource
-def load_text_generator():
-    return pipeline(
-        task="text-generation",
-        model="google/flan-t5-large",
-        device_map="auto",
-        max_new_tokens=200
-    )
+def generate_prompt(user_review, similar_reviews):
+    context = "\n".join([f"- Rating: {r['note']}★\n  Review: {r['review_en']}" for r in similar_reviews]) if similar_reviews else "No similar reviews found."
+    prompt = f"""
+You are an expert in customer feedback writing.
 
-generator = load_text_generator()
+Your task:
+1. Correct spelling and grammar mistakes
+2. Improve clarity and fluency
+3. Keep the original meaning
+4. Do NOT invent new information
+5. Keep it natural and human
 
-# =====================================================
-# PROMPT UTILS
-# =====================================================
-def correct_text(text):
-    prompt = f"Correct spelling and grammar mistakes without changing the meaning:\n{text}"
-    corrected = generator(prompt, max_new_tokens=200)[0]['generated_text']
-    return corrected
+### Similar existing reviews:
+{context}
 
-def reformulate_text(text, similar_reviews):
-    context = "\n".join([
-        f"- Rating: {r['note']}★ Review: {r['review_en']}"
-        for r in similar_reviews
-    ]) if similar_reviews else "No similar reviews found."
-    prompt = f"Reformulate this review to improve clarity and fluency, keeping the meaning. Consider these examples:\n{context}\n\nUser review: {text}"
-    reformulated = generator(prompt, max_new_tokens=200)[0]['generated_text']
-    return reformulated
+### User review:
+{user_review}
+
+### Output format:
+Corrected version:
+...
+
+Reformulated version:
+...
+"""
+    return prompt
 
 # =====================================================
 # USER INPUT
 # =====================================================
 st.header("🧪 Test a Review")
-selected_review = st.selectbox("Select a review:", df_test["avis_en"].tolist())
+
+selected_review = st.selectbox(
+    "Select a review:",
+    df_test["avis_en"].tolist()
+)
+
 user_input = st.text_area("Or write your own review:")
+
 input_review = user_input.strip() if user_input.strip() else selected_review
 
 # =====================================================
-# GENERATE & DISPLAY RESULTS
+# PROMPT PREVIEW
+# =====================================================
+if st.button("Generate Prompt Preview"):
+    similar = retrieve_similar_reviews(input_review)
+    default_prompt = generate_prompt(input_review, similar)
+    st.text_area("Editable Prompt", value=default_prompt, height=400)
+
+# =====================================================
+# PREDICTION
 # =====================================================
 if st.button("Predict & Reformulate"):
+
     if input_review.strip() == "":
         st.warning("Please enter a review.")
     else:
         with st.spinner("Processing..."):
             similar_reviews = retrieve_similar_reviews(input_review)
-            corrected = correct_text(input_review)
-            reformulated = reformulate_text(input_review, similar_reviews)
+            prompt = generate_prompt(input_review, similar_reviews)
+
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3
+            )
+
+            # Extraire Corrected + Reformulated
+            text_output = response.choices[0].message.content
+            corrected = ""
+            reformulated = ""
+            if "Corrected version:" in text_output:
+                corrected = text_output.split("Corrected version:")[1].split("Reformulated version:")[0].strip()
+            if "Reformulated version:" in text_output:
+                reformulated = text_output.split("Reformulated version:")[1].strip()
 
         st.success("✅ Done!")
 
         st.subheader("Original Review")
         st.write(input_review)
 
-        st.subheader("Corrected Review")
-        st.write(corrected)
+        st.subheader("Corrected Version")
+        st.write(corrected if corrected else "No corrected version detected.")
 
-        st.subheader("Reformulated Review")
-        st.write(reformulated)
+        st.subheader("Reformulated Version")
+        st.write(reformulated if reformulated else "No reformulated version detected.")
 
         st.subheader("🔍 Similar Reviews")
         for r in similar_reviews:
             st.markdown(f"- **{r['note']}★** | {r['review_en']}")
 
 st.markdown("---")
-st.caption("RAG app - deployable version (FAISS + SentenceTransformers + HuggingFace Flan-T5)")
+st.caption("RAG app - deployable version (FAISS + SentenceTransformers + OpenAI)")
