@@ -1,6 +1,6 @@
 # =====================================================
 # RAG (Retrieval-Augmented Generation) - Streamlit
-# VERSION DEPLOYABLE (NO OLLAMA)
+# VERSION DEPLOYABLE (HUGGINGFACE MISTRAL)
 # =====================================================
 
 import streamlit as st
@@ -8,16 +8,15 @@ import pandas as pd
 import numpy as np
 import faiss
 from sentence_transformers import SentenceTransformer
-from openai import OpenAI
+from transformers import pipeline
+import torch
 
 # =====================================================
 # CONFIG
 # =====================================================
 st.set_page_config(layout="wide")
-st.title("🤖 RAG - Review Reformulation (Deployable)")
+st.title("🤖 RAG - Review Reformulation (HuggingFace Mistral)")
 st.markdown("---")
-
-client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 # =====================================================
 # LOAD DATA
@@ -25,32 +24,23 @@ client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 @st.cache_data
 def load_data():
     df = pd.read_excel("data/reviews_nlp.xlsx")
-
     df = df.dropna(subset=["avis_cor", "avis_en", "note"])
-
     df["avis_cor"] = df["avis_cor"].astype(str)\
         .str.replace(r'[\r\n]+', ' ', regex=True)\
         .str.replace(r'\s+', ' ', regex=True).str.strip()
-
     df["avis_en"] = df["avis_en"].astype(str)\
         .str.replace(r'[\r\n]+', ' ', regex=True)\
         .str.replace(r'\s+', ' ', regex=True).str.strip()
-
     df = df[(df["avis_cor"] != "") & (df["avis_en"] != "")]
     df["note"] = df["note"].astype(int)
-
     return df
 
 df = load_data()
-
 all_reviews_clean = df["avis_cor"].tolist()
 all_reviews_en = df["avis_en"].tolist()
 all_notes = df["note"].tolist()
 
-review_db = [
-    {"review_en": r_en, "note": note}
-    for r_en, note in zip(all_reviews_en, all_notes)
-]
+review_db = [{"review_en": r_en, "note": note} for r_en, note in zip(all_reviews_en, all_notes)]
 
 st.header("📄 Dataset Overview")
 st.dataframe(df.head(), use_container_width=True)
@@ -71,23 +61,14 @@ model = load_model()
 @st.cache_data
 def get_embeddings_batched(texts, batch_size=32, max_length=200):
     embeddings = []
-
     for i in range(0, len(texts), batch_size):
         batch = texts[i:i+batch_size]
-
-        batch_clean = [
-            " ".join(str(text).split()[:max_length])
-            for text in batch if str(text).strip()
-        ]
-
+        batch_clean = [" ".join(str(text).split()[:max_length]) for text in batch if str(text).strip()]
         if not batch_clean:
             continue
-
         emb = model.encode(batch_clean)
         embeddings.extend(emb)
-
     return np.array(embeddings, dtype=np.float32)
-
 
 @st.cache_resource
 def build_faiss_index(embeddings):
@@ -96,10 +77,8 @@ def build_faiss_index(embeddings):
     index.add(embeddings)
     return index
 
-
 with st.spinner("Generating embeddings and building FAISS index..."):
     all_embeddings = get_embeddings_batched(all_reviews_clean)
-
     if all_embeddings.size == 0:
         st.error("No embeddings generated.")
     else:
@@ -122,21 +101,36 @@ df_test = load_test_reviews()
 # =====================================================
 def retrieve_similar_reviews(query, k=3):
     query_emb = model.encode([query])
-
     faiss.normalize_L2(query_emb)
     distances, indices = index.search(query_emb, k)
-
     return [review_db[i] for i in indices[0] if i < len(review_db)]
+
+# =====================================================
+# LOAD HUGGINGFACE MISTRAL
+# =====================================================
+@st.cache_resource
+def load_mistral():
+    hf_token = st.secrets.get("HUGGINGFACE_API_TOKEN")
+    if not hf_token:
+        st.error("Please add your HuggingFace token in Streamlit Secrets as HUGGINGFACE_API_TOKEN")
+        st.stop()
+    generator = pipeline(
+        "text-generation",
+        model="mistralai/Mistral-7B-Instruct",
+        device_map="auto",
+        torch_dtype=torch.float16,
+        use_auth_token=hf_token
+    )
+    return generator
+
+generator = load_mistral()
 
 # =====================================================
 # PROMPT
 # =====================================================
 def generate_prompt(user_review, similar_reviews):
-    context = "\n".join([
-        f"- Rating: {r['note']}★\n  Review: {r['review_en']}"
-        for r in similar_reviews
-    ]) if similar_reviews else "No similar reviews found."
-
+    context = "\n".join([f"- Rating: {r['note']}★\n  Review: {r['review_en']}" for r in similar_reviews]) \
+              if similar_reviews else "No similar reviews found."
     return f"""
 You are an expert in customer feedback writing.
 
@@ -172,7 +166,6 @@ selected_review = st.selectbox(
 )
 
 user_input = st.text_area("Or write your own review:")
-
 input_review = user_input.strip() if user_input.strip() else selected_review
 
 # =====================================================
@@ -181,29 +174,20 @@ input_review = user_input.strip() if user_input.strip() else selected_review
 if st.button("Generate Prompt Preview"):
     similar = retrieve_similar_reviews(input_review)
     default_prompt = generate_prompt(input_review, similar)
-
     st.text_area("Editable Prompt", value=default_prompt, height=400)
 
 # =====================================================
 # PREDICTION
 # =====================================================
 if st.button("Predict & Reformulate"):
-
     if input_review.strip() == "":
         st.warning("Please enter a review.")
     else:
         with st.spinner("Processing..."):
-
             similar_reviews = retrieve_similar_reviews(input_review)
             prompt = generate_prompt(input_review, similar_reviews)
-
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3
-            )
-
-            result = response.choices[0].message.content
+            # HuggingFace Mistral call
+            result = generator(prompt, max_new_tokens=250, temperature=0.3)[0]["generated_text"]
 
         st.success("✅ Done!")
 
@@ -218,4 +202,4 @@ if st.button("Predict & Reformulate"):
             st.markdown(f"- **{r['note']}★** | {r['review_en']}")
 
 st.markdown("---")
-st.caption("RAG app - deployable version (FAISS + SentenceTransformers + OpenAI)")
+st.caption("RAG app - deployable version (FAISS + SentenceTransformers + HuggingFace Mistral)")
