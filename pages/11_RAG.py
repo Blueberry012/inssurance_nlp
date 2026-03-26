@@ -1,5 +1,5 @@
 # =====================================================
-# RAG (Retrieval-Augmented Generation) - Streamlit
+# RAG - Streamlit (HuggingFace)
 # =====================================================
 
 import streamlit as st
@@ -7,22 +7,19 @@ import pandas as pd
 import numpy as np
 import faiss
 from sentence_transformers import SentenceTransformer
-from openai import OpenAI
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 
-# =====================================================
-# CONFIG
-# =====================================================
+# ------------------------
+# Config
+# ------------------------
 st.set_page_config(layout="wide")
-st.title("🤖 RAG - Review Reformulation (Deployable)")
+st.title("🤖 RAG - Review Reformulation (HuggingFace)")
 st.markdown("---")
 
-# =====================================================
-# OPENAI CLIENT
-# =====================================================
-client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+HF_TOKEN = st.secrets["HUGGINGFACE_API_TOKEN"]  # ton token
 
 # =====================================================
-# LOAD DATA
+# Load Data
 # =====================================================
 @st.cache_data
 def load_data():
@@ -38,7 +35,6 @@ df = load_data()
 all_reviews_clean = df["avis_cor"].tolist()
 all_reviews_en = df["avis_en"].tolist()
 all_notes = df["note"].tolist()
-
 review_db = [{"review_en": r_en, "note": note} for r_en, note in zip(all_reviews_en, all_notes)]
 
 st.header("📄 Dataset Overview")
@@ -46,25 +42,20 @@ st.dataframe(df.head(), use_container_width=True)
 st.markdown("---")
 
 # =====================================================
-# EMBEDDING MODEL
+# Embedding Model + FAISS
 # =====================================================
 @st.cache_resource
-def load_model():
+def load_embedding_model():
     return SentenceTransformer("all-MiniLM-L6-v2")
 
-model = load_model()
+embedding_model = load_embedding_model()
 
-# =====================================================
-# FAISS INDEX
-# =====================================================
 @st.cache_data
-def get_embeddings_batched(texts, batch_size=32, max_length=200):
+def get_embeddings(texts, batch_size=32):
     embeddings = []
     for i in range(0, len(texts), batch_size):
         batch = texts[i:i+batch_size]
-        batch_clean = [" ".join(str(text).split()[:max_length]) for text in batch if str(text).strip()]
-        if not batch_clean: continue
-        emb = model.encode(batch_clean)
+        emb = embedding_model.encode(batch)
         embeddings.extend(emb)
     return np.array(embeddings, dtype=np.float32)
 
@@ -76,39 +67,38 @@ def build_faiss_index(embeddings):
     return index
 
 with st.spinner("Generating embeddings and building FAISS index..."):
-    all_embeddings = get_embeddings_batched(all_reviews_clean)
-    if all_embeddings.size == 0:
-        st.error("No embeddings generated.")
-    else:
-        index = build_faiss_index(all_embeddings)
-        st.success(f"FAISS index ready with {index.ntotal} vectors.")
+    embeddings = get_embeddings(all_reviews_clean)
+    index = build_faiss_index(embeddings)
+    st.success(f"FAISS index ready with {index.ntotal} vectors.")
 
 # =====================================================
-# LOAD TEST DATA
+# Load HuggingFace Text2Text Model
 # =====================================================
-@st.cache_data
-def load_test_reviews():
-    df_test = pd.read_excel("data/reviews_clean.xlsx")
-    df_test = df_test[df_test["type"]=="test"].reset_index(drop=True)
-    return df_test
+@st.cache_resource
+def load_hf_model():
+    model_name = "google/flan-t5-large"  # modèle text2text adapté
+    tokenizer = AutoTokenizer.from_pretrained(model_name, use_auth_token=HF_TOKEN)
+    model = AutoModelForSeq2SeqLM.from_pretrained(model_name, use_auth_token=HF_TOKEN)
+    return pipeline("text2text-generation", model=model, tokenizer=tokenizer, device=0)
 
-df_test = load_test_reviews()
+generator = load_hf_model()
 
 # =====================================================
-# RETRIEVAL
+# Retrieval
 # =====================================================
 def retrieve_similar_reviews(query, k=3):
-    query_emb = model.encode([query])
+    query_emb = embedding_model.encode([query])
     faiss.normalize_L2(query_emb)
     distances, indices = index.search(query_emb, k)
     return [review_db[i] for i in indices[0] if i < len(review_db)]
 
 # =====================================================
-# PROMPT GENERATION
+# Prompt Generation
 # =====================================================
 def generate_prompt(user_review, similar_reviews):
-    context = "\n".join([f"- Rating: {r['note']}★\n  Review: {r['review_en']}" for r in similar_reviews]) if similar_reviews else "No similar reviews found."
-    prompt = f"""
+    context = "\n".join([f"- Rating: {r['note']}★\n  Review: {r['review_en']}" for r in similar_reviews]) \
+        if similar_reviews else "No similar reviews found."
+    return f"""
 You are an expert in customer feedback writing.
 
 Your task:
@@ -131,71 +121,36 @@ Corrected version:
 Reformulated version:
 ...
 """
-    return prompt
 
 # =====================================================
-# USER INPUT
+# User Input
 # =====================================================
 st.header("🧪 Test a Review")
-
-selected_review = st.selectbox(
-    "Select a review:",
-    df_test["avis_en"].tolist()
-)
-
+selected_review = st.selectbox("Select a review:", df["avis_en"].tolist())
 user_input = st.text_area("Or write your own review:")
-
 input_review = user_input.strip() if user_input.strip() else selected_review
 
-# =====================================================
-# PROMPT PREVIEW
-# =====================================================
 if st.button("Generate Prompt Preview"):
-    similar = retrieve_similar_reviews(input_review)
-    default_prompt = generate_prompt(input_review, similar)
-    st.text_area("Editable Prompt", value=default_prompt, height=400)
+    similar_reviews = retrieve_similar_reviews(input_review)
+    prompt = generate_prompt(input_review, similar_reviews)
+    st.text_area("Prompt (editable)", value=prompt, height=400)
 
 # =====================================================
-# PREDICTION
+# Prediction
 # =====================================================
 if st.button("Predict & Reformulate"):
-
     if input_review.strip() == "":
         st.warning("Please enter a review.")
     else:
-        with st.spinner("Processing..."):
-            similar_reviews = retrieve_similar_reviews(input_review)
-            prompt = generate_prompt(input_review, similar_reviews)
-
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3
-            )
-
-            # Extraire Corrected + Reformulated
-            text_output = response.choices[0].message.content
-            corrected = ""
-            reformulated = ""
-            if "Corrected version:" in text_output:
-                corrected = text_output.split("Corrected version:")[1].split("Reformulated version:")[0].strip()
-            if "Reformulated version:" in text_output:
-                reformulated = text_output.split("Reformulated version:")[1].strip()
-
-        st.success("✅ Done!")
+        similar_reviews = retrieve_similar_reviews(input_review)
+        prompt = generate_prompt(input_review, similar_reviews)
+        with st.spinner("Generating corrected and reformulated review..."):
+            output = generator(prompt, max_length=512, do_sample=True, temperature=0.3)[0]["generated_text"]
 
         st.subheader("Original Review")
         st.write(input_review)
-
-        st.subheader("Corrected Version")
-        st.write(corrected if corrected else "No corrected version detected.")
-
-        st.subheader("Reformulated Version")
-        st.write(reformulated if reformulated else "No reformulated version detected.")
-
+        st.subheader("Reformulated Review")
+        st.write(output)
         st.subheader("🔍 Similar Reviews")
         for r in similar_reviews:
             st.markdown(f"- **{r['note']}★** | {r['review_en']}")
-
-st.markdown("---")
-st.caption("RAG app - deployable version (FAISS + SentenceTransformers + OpenAI)")
