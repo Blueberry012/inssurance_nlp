@@ -1,6 +1,6 @@
 # =====================================================
 # RAG (Retrieval-Augmented Generation) - Streamlit
-# VERSION DEPLOYABLE (HUGGINGFACE MISTRAL)
+# VERSION DEPLOYABLE (NO OLLAMA / NO OPENAI)
 # =====================================================
 
 import streamlit as st
@@ -9,13 +9,12 @@ import numpy as np
 import faiss
 from sentence_transformers import SentenceTransformer
 from transformers import pipeline
-import torch
 
 # =====================================================
 # CONFIG
 # =====================================================
 st.set_page_config(layout="wide")
-st.title("🤖 RAG - Review Reformulation (HuggingFace Mistral)")
+st.title("🤖 RAG - Review Reformulation (Deployable)")
 st.markdown("---")
 
 # =====================================================
@@ -40,7 +39,10 @@ all_reviews_clean = df["avis_cor"].tolist()
 all_reviews_en = df["avis_en"].tolist()
 all_notes = df["note"].tolist()
 
-review_db = [{"review_en": r_en, "note": note} for r_en, note in zip(all_reviews_en, all_notes)]
+review_db = [
+    {"review_en": r_en, "note": note}
+    for r_en, note in zip(all_reviews_en, all_notes)
+]
 
 st.header("📄 Dataset Overview")
 st.dataframe(df.head(), use_container_width=True)
@@ -50,10 +52,10 @@ st.markdown("---")
 # EMBEDDING MODEL
 # =====================================================
 @st.cache_resource
-def load_model():
+def load_embedding_model():
     return SentenceTransformer("all-MiniLM-L6-v2")
 
-model = load_model()
+embedding_model = load_embedding_model()
 
 # =====================================================
 # EMBEDDINGS + FAISS
@@ -66,7 +68,7 @@ def get_embeddings_batched(texts, batch_size=32, max_length=200):
         batch_clean = [" ".join(str(text).split()[:max_length]) for text in batch if str(text).strip()]
         if not batch_clean:
             continue
-        emb = model.encode(batch_clean)
+        emb = embedding_model.encode(batch_clean)
         embeddings.extend(emb)
     return np.array(embeddings, dtype=np.float32)
 
@@ -100,37 +102,33 @@ df_test = load_test_reviews()
 # RETRIEVAL
 # =====================================================
 def retrieve_similar_reviews(query, k=3):
-    query_emb = model.encode([query])
+    query_emb = embedding_model.encode([query])
     faiss.normalize_L2(query_emb)
     distances, indices = index.search(query_emb, k)
     return [review_db[i] for i in indices[0] if i < len(review_db)]
 
 # =====================================================
-# LOAD HUGGINGFACE MISTRAL
+# LOAD TEXT-GENERATION MODEL
 # =====================================================
 @st.cache_resource
-def load_mistral():
-    hf_token = st.secrets.get("HUGGINGFACE_API_TOKEN")
-    if not hf_token:
-        st.error("Please add your HuggingFace token in Streamlit Secrets as HUGGINGFACE_API_TOKEN")
-        st.stop()
-    generator = pipeline(
-        "text-generation",
-        model="mistralai/Mistral-7B-Instruct",
-        device_map="auto",
-        torch_dtype=torch.float16,
-        use_auth_token=hf_token
+def load_text_generator():
+    return pipeline(
+        "text2text-generation",
+        model="google/flan-t5-large",
+        device_map="auto"
     )
-    return generator
 
-generator = load_mistral()
+generator = load_text_generator()
 
 # =====================================================
 # PROMPT
 # =====================================================
 def generate_prompt(user_review, similar_reviews):
-    context = "\n".join([f"- Rating: {r['note']}★\n  Review: {r['review_en']}" for r in similar_reviews]) \
-              if similar_reviews else "No similar reviews found."
+    context = "\n".join([
+        f"- Rating: {r['note']}★\n  Review: {r['review_en']}"
+        for r in similar_reviews
+    ]) if similar_reviews else "No similar reviews found."
+
     return f"""
 You are an expert in customer feedback writing.
 
@@ -159,12 +157,7 @@ Reformulated version:
 # USER INPUT
 # =====================================================
 st.header("🧪 Test a Review")
-
-selected_review = st.selectbox(
-    "Select a review:",
-    df_test["avis_en"].tolist()
-)
-
+selected_review = st.selectbox("Select a review:", df_test["avis_en"].tolist())
 user_input = st.text_area("Or write your own review:")
 input_review = user_input.strip() if user_input.strip() else selected_review
 
@@ -186,20 +179,16 @@ if st.button("Predict & Reformulate"):
         with st.spinner("Processing..."):
             similar_reviews = retrieve_similar_reviews(input_review)
             prompt = generate_prompt(input_review, similar_reviews)
-            # HuggingFace Mistral call
-            result = generator(prompt, max_new_tokens=250, temperature=0.3)[0]["generated_text"]
+            result = generator(prompt, max_new_tokens=200)[0]['generated_text']
 
         st.success("✅ Done!")
-
         st.subheader("Original Review")
         st.write(input_review)
-
         st.subheader("Reformulated Review")
         st.write(result)
-
         st.subheader("🔍 Similar Reviews")
         for r in similar_reviews:
             st.markdown(f"- **{r['note']}★** | {r['review_en']}")
 
 st.markdown("---")
-st.caption("RAG app - deployable version (FAISS + SentenceTransformers + HuggingFace Mistral)")
+st.caption("RAG app - deployable version (FAISS + SentenceTransformers + Flan-T5)")
