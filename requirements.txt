@@ -20,3 +20,4 @@ faiss-cpu
 tqdm
 peft
 ollama
+sentence-transformers
