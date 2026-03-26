@@ -116,7 +116,7 @@ def retrieve_similar_reviews(query, k=3):
 @st.cache_resource
 def load_text_generator():
     return pipeline(
-        "text2text-generation",   # attention ici c’est text2text-generation pour T5
+        task="text-generation",
         model="google/flan-t5-large",
         device_map="auto",
         max_new_tokens=200
