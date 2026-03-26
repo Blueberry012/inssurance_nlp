@@ -1,11 +1,26 @@
+# Web app
 streamlit
+
+# Data manipulation
 pandas
 numpy
-scikit-learn
-nltk
-gensim
-folium
-streamlit-folium
+
+# Visualisation
 matplotlib
-plotly
-openpyxl
+seaborn
+
+# NLP / Machine Learning
+scikit-learn
+gensim
+xgboost
+tensorflow
+torch
+transformers
+peft
+
+# Vector search / embeddings
+faiss-cpu
+ollama
+
+# Utilities
+tqdm
