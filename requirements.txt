@@ -21,3 +21,4 @@ tqdm
 peft
 ollama
 sentence-transformers
+openai
