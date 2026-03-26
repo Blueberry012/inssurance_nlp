@@ -6,23 +6,19 @@ import pandas as pd
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.model_selection import train_test_split
-import pickle
-import os
+import gensim.downloader as api
 
 # =====================================================
-# Classe Gensim Interface (version fichier local .vecs)
+# Classe Gensim Interface (préchargement en mémoire)
 # =====================================================
 class gensim_interface:
     """
-    Interface légère pour charger des embeddings depuis un fichier pickle (.vecs).
+    Interface légère pour charger des embeddings depuis Gensim
+    sans stocker de fichiers volumineux sur GitHub.
     """
-    def __init__(self, embedding_file):
-        if os.path.isfile(embedding_file):
-            st.info(f"Chargement du modèle d'embeddings depuis {embedding_file}...")
-            with open(embedding_file, "rb") as fd:
-                self.embeddingVectors = pickle.load(fd)
-        else:
-            raise FileNotFoundError(f"{embedding_file} introuvable. Préparez le fichier .vecs sur votre repo.")
+    def __init__(self, embeddingName):
+        print(f"Téléchargement du modèle '{embeddingName}' depuis Gensim si nécessaire...")
+        self.embeddingVectors = api.load(embeddingName)  # téléchargement automatique
         self.vectors = self.embeddingVectors.vectors
 
     def isVec(self, word):
@@ -58,8 +54,7 @@ st.dataframe(df.head(), use_container_width=True)
 # =====================================================
 # Prepare Train/Test Split
 # =====================================================
-# ⚠️ Mettre le fichier pré-téléchargé glove-wiki-gigaword-100.vecs dans le dossier 'model'
-emb = gensim_interface("model/glove-wiki-gigaword-100.vecs")
+emb = gensim_interface('glove-wiki-gigaword-100')
 
 grouped = df.groupby('assureur')['avis_spacy'].apply(
     lambda x: " ".join(x)
