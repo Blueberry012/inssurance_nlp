@@ -1,6 +1,6 @@
 # =====================================================
-# RAG (Retrieval-Augmented Generation) - Streamlit
-# VERSION DEPLOYABLE (FAISS + SentenceTransformers + HuggingFace Flan-T5)
+# RAG - Streamlit (FAISS + SentenceTransformers + HuggingFace Flan-T5)
+# Corrige & Reformule correctement les reviews
 # =====================================================
 
 import streamlit as st
@@ -35,7 +35,6 @@ def load_data():
     return df
 
 df = load_data()
-
 all_reviews_clean = df["avis_cor"].tolist()
 all_reviews_en = df["avis_en"].tolist()
 all_notes = df["note"].tolist()
@@ -117,7 +116,7 @@ def retrieve_similar_reviews(query, k=3):
 @st.cache_resource
 def load_text_generator():
     return pipeline(
-        "text-generation",
+        "text2text-generation",   # attention ici c’est text2text-generation pour T5
         model="google/flan-t5-large",
         device_map="auto",
         max_new_tokens=200
@@ -126,62 +125,32 @@ def load_text_generator():
 generator = load_text_generator()
 
 # =====================================================
-# PROMPT
+# PROMPT UTILS
 # =====================================================
-def generate_prompt(user_review, similar_reviews):
+def correct_text(text):
+    prompt = f"Correct spelling and grammar mistakes without changing the meaning:\n{text}"
+    corrected = generator(prompt, max_new_tokens=200)[0]['generated_text']
+    return corrected
+
+def reformulate_text(text, similar_reviews):
     context = "\n".join([
-        f"- Rating: {r['note']}★\n  Review: {r['review_en']}"
+        f"- Rating: {r['note']}★ Review: {r['review_en']}"
         for r in similar_reviews
     ]) if similar_reviews else "No similar reviews found."
-
-    return f"""
-You are an expert in customer feedback writing.
-
-Your task:
-1. Correct spelling and grammar mistakes
-2. Improve clarity and fluency
-3. Keep the original meaning
-4. Do NOT invent new information
-5. Keep it natural and human
-
-### Similar existing reviews:
-{context}
-
-### User review:
-{user_review}
-
-### Output format:
-Corrected version:
-...
-
-Reformulated version:
-...
-"""
+    prompt = f"Reformulate this review to improve clarity and fluency, keeping the meaning. Consider these examples:\n{context}\n\nUser review: {text}"
+    reformulated = generator(prompt, max_new_tokens=200)[0]['generated_text']
+    return reformulated
 
 # =====================================================
 # USER INPUT
 # =====================================================
 st.header("🧪 Test a Review")
-
-selected_review = st.selectbox(
-    "Select a review:",
-    df_test["avis_en"].tolist()
-)
-
+selected_review = st.selectbox("Select a review:", df_test["avis_en"].tolist())
 user_input = st.text_area("Or write your own review:")
-
 input_review = user_input.strip() if user_input.strip() else selected_review
 
 # =====================================================
-# GENERATE PROMPT PREVIEW
-# =====================================================
-if st.button("Generate Prompt Preview"):
-    similar = retrieve_similar_reviews(input_review)
-    default_prompt = generate_prompt(input_review, similar)
-    st.text_area("Editable Prompt", value=default_prompt, height=400)
-
-# =====================================================
-# PREDICTION
+# GENERATE & DISPLAY RESULTS
 # =====================================================
 if st.button("Predict & Reformulate"):
     if input_review.strip() == "":
@@ -189,16 +158,19 @@ if st.button("Predict & Reformulate"):
     else:
         with st.spinner("Processing..."):
             similar_reviews = retrieve_similar_reviews(input_review)
-            prompt = generate_prompt(input_review, similar_reviews)
-            result = generator(prompt, max_new_tokens=200)[0]['generated_text']
+            corrected = correct_text(input_review)
+            reformulated = reformulate_text(input_review, similar_reviews)
 
         st.success("✅ Done!")
 
         st.subheader("Original Review")
         st.write(input_review)
 
+        st.subheader("Corrected Review")
+        st.write(corrected)
+
         st.subheader("Reformulated Review")
-        st.write(result)
+        st.write(reformulated)
 
         st.subheader("🔍 Similar Reviews")
         for r in similar_reviews:
