@@ -15,22 +15,11 @@ import os
 # =====================================================
 class gensim_interface:
     """
-    Liste des embeddings disponibles :
-    ['fasttext-wiki-news-subwords-300', 'conceptnet-numberbatch-17-06-300',
-     'word2vec-ruscorpora-300', 'word2vec-google-news-300',
-     'glove-wiki-gigaword-50', 'glove-wiki-gigaword-100', 'glove-wiki-gigaword-200',
-     'glove-wiki-gigaword-300', 'glove-twitter-25', 'glove-twitter-50',
-     'glove-twitter-100', 'glove-twitter-200', '__testing_word2vec-matrix-synopsis']
+    Interface légère pour charger des embeddings depuis Gensim sans stocker de gros fichiers sur GitHub.
     """
-
     def embeddingPreparation(self, embeddingName):
+        print(f"Téléchargement du modèle '{embeddingName}' depuis Gensim...")
         self.embeddingVectors = gensim.downloader.load(embeddingName)
-        with open(embeddingName + ".vecs","wb") as fd:
-            pickle.dump(self.embeddingVectors, fd)
-
-    def loadPreparedEmbedding(self, embeddingName):
-        with open(embeddingName + ".vecs","rb") as fd:
-            self.embeddingVectors = pickle.load(fd)
 
     def isVec(self, word):
         return word in self.embeddingVectors
@@ -38,39 +27,12 @@ class gensim_interface:
     def getVec(self, word):
         return self.embeddingVectors[word]
 
-    def getId(self, word):
-        return self.embeddingVectors.key_to_index[word]
-
-    def getWord(self, idx):
-        return self.embeddingVectors.index_to_key[idx]
-
-    def getVocabList(self):
-        return self.embeddingVectors.index_to_key
-
-    def getVocabDic(self):
-        return self.embeddingVectors.key_to_index
-
-    def getLenVocab(self):
-        return len(self.embeddingVectors.index_to_key)
-
     def nbDims(self):
         return self.embeddingVectors.vector_size
 
-    def getAvailableEmbeddings(self):
-        return list(gensim.downloader.info()['models'].keys())
-
-    def getMostSimilar(self, word, n):
-        ms = self.embeddingVectors.most_similar(word, topn=n)
-        return [elem[0] for elem in ms]
-
     def __init__(self, embeddingName):
-        fileName = embeddingName + ".vecs"
-        if os.path.isfile(fileName):
-            print("Loading embeddings...")
-            self.loadPreparedEmbedding(embeddingName)
-        else:
-            print("Preparing embeddings...")
-            self.embeddingPreparation(embeddingName)
+        # Le modèle est téléchargé automatiquement dans ~/.gensim-data
+        self.embeddingPreparation(embeddingName)
         self.vectors = self.embeddingVectors.vectors
 
 # =====================================================
