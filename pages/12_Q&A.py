@@ -56,7 +56,7 @@ st.markdown("---")
 # =====================================================
 
 @st.cache_data
-def load_embeddings(file_path="data/all_embeddings.npy"):
+def load_embeddings(file_path="data/all_embeddings_qa.npy"):
     if not os.path.exists(file_path):
         st.error(f"Embeddings file '{file_path}' not found. Please precompute embeddings locally.")
         return np.array([], dtype=np.float32)
