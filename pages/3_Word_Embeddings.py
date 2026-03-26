@@ -6,20 +6,24 @@ import pandas as pd
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.model_selection import train_test_split
-import gensim.downloader
 import pickle
 import os
 
 # =====================================================
-# Classe Gensim Interface
+# Classe Gensim Interface (version fichier local .vecs)
 # =====================================================
 class gensim_interface:
     """
-    Interface légère pour charger des embeddings depuis Gensim sans stocker de gros fichiers sur GitHub.
+    Interface légère pour charger des embeddings depuis un fichier pickle (.vecs).
     """
-    def embeddingPreparation(self, embeddingName):
-        print(f"Téléchargement du modèle '{embeddingName}' depuis Gensim...")
-        self.embeddingVectors = gensim.downloader.load(embeddingName)
+    def __init__(self, embedding_file):
+        if os.path.isfile(embedding_file):
+            st.info(f"Chargement du modèle d'embeddings depuis {embedding_file}...")
+            with open(embedding_file, "rb") as fd:
+                self.embeddingVectors = pickle.load(fd)
+        else:
+            raise FileNotFoundError(f"{embedding_file} introuvable. Préparez le fichier .vecs sur votre repo.")
+        self.vectors = self.embeddingVectors.vectors
 
     def isVec(self, word):
         return word in self.embeddingVectors
@@ -29,11 +33,6 @@ class gensim_interface:
 
     def nbDims(self):
         return self.embeddingVectors.vector_size
-
-    def __init__(self, embeddingName):
-        # Le modèle est téléchargé automatiquement dans ~/.gensim-data
-        self.embeddingPreparation(embeddingName)
-        self.vectors = self.embeddingVectors.vectors
 
 # =====================================================
 # Page Config
@@ -59,10 +58,8 @@ st.dataframe(df.head(), use_container_width=True)
 # =====================================================
 # Prepare Train/Test Split
 # =====================================================
-import gensim.downloader as api
-
-api.BASE_DIR = "model"  # dossiers locaux pour cacher le téléchargement
-emb = gensim_interface('glove-wiki-gigaword-100')
+# ⚠️ Mettre le fichier pré-téléchargé glove-wiki-gigaword-100.vecs dans le dossier 'model'
+emb = gensim_interface("model/glove-wiki-gigaword-100.vecs")
 
 grouped = df.groupby('assureur')['avis_spacy'].apply(
     lambda x: " ".join(x)
@@ -87,7 +84,7 @@ def get_document_embedding(text, emb):
     return np.mean(vectors, axis=0)
 
 @st.cache_data
-def compute_embeddings(X_train, X_test, _emb):  # <-- underscore pour ignorer hashing
+def compute_embeddings(X_train, X_test, _emb):
     train_embeddings = np.array([get_document_embedding(t, _emb) for t in X_train['avis_spacy']])
     test_embeddings  = np.array([get_document_embedding(t, _emb) for t in X_test['avis_spacy']])
     sim_matrix = cosine_similarity(test_embeddings, train_embeddings)
@@ -117,7 +114,7 @@ def explain_similarity_words(query_text, similar_text, emb, top_k_words=8, thres
     return matched_pairs[:top_k_words]
 
 # =====================================================
-# Recommendation Function (affichage côte-à-côte)
+# Recommendation Function
 # =====================================================
 def recommend_insurer(assureur_query, top_k=3, top_n_words=5):
     X_test_reset = X_test02.reset_index(drop=True)
@@ -134,7 +131,7 @@ def recommend_insurer(assureur_query, top_k=3, top_n_words=5):
     query_text = X_test_reset.iloc[query_idx]['avis_spacy']
 
     st.subheader("🔎 Top Recommendations")
-    cols = st.columns(top_k)  # une colonne par recommandation
+    cols = st.columns(top_k)
 
     for rank, (idx, col) in enumerate(zip(top_indices, cols), start=1):
         rec_assureur = X_train_reset.iloc[idx]['assureur']
