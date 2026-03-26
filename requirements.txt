@@ -5,6 +5,7 @@ numpy>=1.26.0
 scikit-learn
 matplotlib>=3.8.0
 seaborn>=0.12.2
+xgboost
 wordcloud
 pillow>=10.0.0
 nltk
@@ -18,3 +19,4 @@ transformers
 faiss-cpu
 tqdm
 peft
+ollama
