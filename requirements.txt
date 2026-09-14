@@ -4,7 +4,7 @@ streamlit-folium
 
 # Data processing
 pandas>=2.0.0
-numpy>=1.26.0
+numpy<2.0
 scikit-learn
 openpyxl
 nltk
@@ -19,14 +19,14 @@ folium
 pillow>=10.0.0
 
 # ML / DL
-tensorflow
-torch
-transformers
-peft
-sentence-transformers
-faiss-cpu
+torch==2.4.1
+transformers==4.44.2
+tokenizers==0.19.1
+peft==0.12.0
+sentence-transformers==3.0.1
+faiss-cpu==1.8.0
 tqdm
 xgboost
 
 # HuggingFace API
-huggingface-hub
+huggingface-hub==0.24.6
