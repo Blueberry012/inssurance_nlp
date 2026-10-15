@@ -9,6 +9,7 @@ scikit-learn
 openpyxl
 nltk
 gensim
+tensorflow-cpu
 
 # Visualization
 matplotlib>=3.8.0
