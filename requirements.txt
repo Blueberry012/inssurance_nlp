@@ -23,11 +23,11 @@ pillow>=10.0.0
 torch==2.4.1
 transformers==4.44.2
 tokenizers==0.19.1
-peft>=0.17.0
+peft==0.17.1
 sentence-transformers==3.0.1
 faiss-cpu==1.8.0
 tqdm
 xgboost
 
 # HuggingFace API
-huggingface-hub==0.24.6
+huggingface-hub>=0.25.0,<1.0
