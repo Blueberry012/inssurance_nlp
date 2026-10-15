@@ -28,6 +28,7 @@ sentence-transformers==3.0.1
 faiss-cpu==1.8.0
 tqdm
 xgboost
+peft>=0.17.0
 
 # HuggingFace API
 huggingface-hub==0.24.6
