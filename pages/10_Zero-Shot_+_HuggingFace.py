@@ -1,6 +1,9 @@
 # =====================================================
 # Zero-Shot Classification Streamlit (with custom subjects)
 # =====================================================
+import os
+os.environ["USE_TF"] = "0"
+os.environ["USE_TORCH"] = "1"
 
 import streamlit as st
 import pandas as pd
