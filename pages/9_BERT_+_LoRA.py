@@ -99,9 +99,10 @@ def predict_review(text):
         return_tensors="pt",
         truncation=True,
         padding=True,
-        max_length=max_length
+        max_length=128,            # garde ta valeur actuelle
+        return_token_type_ids=False
     )
-    inputs = {k: v.to(device) for k,v in inputs.items()}
+    inputs = {k: v.to(device) for k, v in inputs.items()}
     with torch.no_grad():
         outputs = model(**inputs)
         logits = outputs.logits
